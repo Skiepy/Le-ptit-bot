@@ -626,9 +626,12 @@ _Ticket : [`tickets/22-dependances-pillow-vulnerable-python-3-12-requis-n.md`](t
 - « Qui d'entre nous » : un menu de sélection Discord est limité à 25 options. Au-delà de 25 joueurs, la création du vote échoue.
 - `/mature` et `/immature` sont définies avec les noms Python `ban` / `unban`, ce qui écrase les fonctions précédentes. Pas de bug fonctionnel (les commandes sont enregistrées à la décoration), mais c'est trompeur.
 - `random.seed(seed)` puis `random.seed(None)` sur le générateur global (`bot.py:695`) : utiliser `random.Random(seed)`.
+- **Coût de chaque message** : `on_message` relit 4 fichiers dont `dico.txt` (40 000 mots), puis trie l'ensemble, **à chaque message reçu**. Mesuré : 18 ms de travail bloquant par message banal, soit environ 55 messages/s au maximum pour tout le bot. Garder le dico en mémoire dans un `set` et n'écrire que les ajouts.
+- `--join` / `--leave` : `AttributeError` si l'auteur n'est pas en vocal ; n'importe qui peut faire entrer le bot dans un salon vocal.
+- `/delete_starter` : un double clic sur « Supprimer » fait `pop()` deux fois, d'où un `KeyError` au second clic.
 
 #### Preuve
-`randomWord` exécuté. Le reste vient de la lecture du code.
+`randomWord` et le coût de `on_message` exécutés. Le reste vient de la lecture du code.
 
 #### Correctif proposé
 Corriger au cas par cas.
