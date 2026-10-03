@@ -109,8 +109,8 @@ sans verrou ni limite de taille : spam = croissance illimitée du disque, et ris
 
 - `txt/primes.txt` (10,4 M de nombres premiers, jusqu'à 187 465 331) fait **97 Mo**. Il n'est jamais envoyé :
   `--prime` envoie `txt/prime.txt` (7 Mo, premiers jusqu'à 14 064 991) et ne lit `primes.txt` que pour en
-  extraire le dernier nombre. Le code qui l'alimentait est commenté. Il fait (limite GitHub : 100 Mo, avertissement dès 50 Mo) ; 7 versions de
-  83 à 97 Mo dans l'historique → pack de 67 Mo. Ce fichier se régénère en quelques secondes : il ne devrait pas être versionné.
+  extraire le dernier nombre. Le code qui l'alimentait est commenté. Sa taille approche la limite GitHub (100 Mo, avertissement dès 50 Mo) ;
+  7 versions de 83 à 97 Mo dans l'historique → pack de 67 Mo. Stocker la valeur `187465331` en constante suffirait.
 - 3174 fichiers d'un `venv/` ont été commités dans le passé.
 - `.gitignore` de 961 lignes (template générique), alors que les fichiers d'état du bot (`txt/tg.txt`,
   `leaderboard.txt`, `onecops_counter.txt`, `dico.txt`…) sont, eux, versionnés et modifiés en prod.
