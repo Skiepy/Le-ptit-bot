@@ -1,0 +1,321 @@
+[
+ {
+  "n": 1,
+  "file": "01-clear-utilisable-par-n-importe-qui.md",
+  "title": "[P0] `--clear` utilisable par n'importe qui",
+  "labels": [
+   "securite",
+   "P0"
+  ],
+  "body": "**Priorité :** P0  \n**Vérification :** ✅ Exécuté  \n**Où :** `bot.py:1765-1779`\n\n## Problème\nLa commande `--clear N` n'a aucune vérification de permission. Il n'y a pas non plus de `bot.check` global. N'importe quel membre peut faire supprimer par le bot jusqu'à 1000 messages, ceux des autres compris, dans tout salon où il peut écrire.\n\n## Preuve\nAppel de la vraie commande avec un auteur sans `manage_messages` ni `administrator` : `clear.checks == []`, et `--clear 50` supprime 51 messages.\n\n## Correctif proposé\n- Ajouter `@commands.has_permissions(manage_messages=True)` et `@commands.guild_only()`.\n- Remplacer la boucle de `delete()` par `await ctx.channel.purge(limit=nombre + 1)`.\n- Gérer `commands.MissingPermissions` dans `on_command_error` pour répondre proprement.\n\n## Critères de validation\n- [ ] Un membre sans « Gérer les messages » reçoit un refus et rien n'est supprimé.\n- [ ] Un modérateur peut toujours utiliser la commande.\n\n_Référence : `docs/audit/AUDIT.md`_\n",
+  "prio": "P0",
+  "verif": "✅ Exécuté",
+  "short": "`--clear` utilisable par n'importe qui"
+ },
+ {
+  "n": 2,
+  "file": "02-le-bot-peut-etre-force-a-pinguer-everyone.md",
+  "title": "[P0] Le bot peut être forcé à pinguer `@everyone`",
+  "labels": [
+   "securite",
+   "P0"
+  ],
+  "body": "**Priorité :** P0  \n**Vérification :** 📖 Lecture du code  \n**Où :** `commands.Bot(...)` (`bot.py:62`) ; vecteurs : `bot.py:420`, `bot.py:431`, `bot.py:1141`, `bot.py:1963`, `bot.py:2122`, `bot.py:3459`\n\n## Problème\nAucun `allowed_mentions` dans le projet. Le bot a la permission Administrateur, donc tout texte utilisateur qu'il renvoie peut contenir un `@everyone` / `@here` / `<@&rôle>` qui pingue réellement.\n\nVecteurs persistants (le texte est stocké puis renvoyé plus tard à d'autres personnes) :\n- `--addInsult @everyone …` → `txt/insultes.txt`, renvoyé quand quelqu'un écrit « tg ».\n- `--addBranlette jme @everyone …` → `txt/branlette.txt`, renvoyé sur « branle ».\n\nVecteurs directs : `/ask`, `--poll`, `--crypt` (le texte original est renvoyé).\n\nPas un vecteur : `/addquidenous`, car les questions sont affichées dans un embed, et Discord ne pingue jamais depuis un embed.\n\n## Preuve\nNon testé sur un vrai serveur. Le ping effectif dépend de la permission « Mentionner @everyone », incluse dans Administrateur.\n\n## Correctif proposé\n- Passer `allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=True, replied_user=True)` à `commands.Bot(...)`.\n- Pour les rares messages qui doivent vraiment pinguer (`bot.py:876`, niveau 100 dans le cog), passer explicitement `allowed_mentions=discord.AllowedMentions(everyone=True)` sur ce `send` uniquement.\n- Nettoyer les entrées déjà présentes dans `insultes.txt` / `branlette.txt` qui contiendraient `@everyone`/`@here`.\n\n## Critères de validation\n- [ ] `--addInsult @everyone test` puis « tg » n'envoie aucune notification.\n- [ ] Les pings voulus (feur, niveau 100) fonctionnent toujours.\n\n_Référence : `docs/audit/AUDIT.md`_\n",
+  "prio": "P0",
+  "verif": "📖 Lecture du code",
+  "short": "Le bot peut être forcé à pinguer `@everyone`"
+ },
+ {
+  "n": 3,
+  "file": "03-dhcp-peut-saturer-la-ram-du-lxc.md",
+  "title": "[P0] `--dhcp` peut saturer la RAM du LXC",
+  "labels": [
+   "securite",
+   "P0",
+   "dos"
+  ],
+  "body": "**Priorité :** P0  \n**Vérification :** ✅ Exécuté  \n**Où :** `bot.py:3562-3622`\n\n## Problème\n`[str(ip) for ip in network]` matérialise toutes les adresses du réseau demandé, sans limite de taille.\n\n## Preuve\nPic de RAM mesuré sur la vraie commande (attente de 45 s court-circuitée) :\n- `10.0.0.0/10` (4 M d'adresses) : +290 Mo, boucle bloquée 4,7 s.\n- `10.0.0.0/8` (16 M) : **+1,16 Go**, 19 s.\n- `0.0.0.0/0` : 256 × `/8`, soit environ 300 Go (extrapolé, non testé). Le processus sera tué par l'OOM killer.\n\nPas de cooldown sur cette commande.\n\n## Correctif proposé\n- Refuser les réseaux plus grands qu'un `/22`, par exemple, via `network.num_addresses`.\n- Ne générer que le nombre d'IP nécessaire (`itertools.islice(network.hosts(), len(users) + 1)`).\n- Gérer le cas « plus de participants que d'IP » (`IndexError` actuel sur `ips.pop(0)`).\n- Ajouter un cooldown.\n\n## Critères de validation\n- [ ] `--dhcp 0.0.0.0/0` est refusé immédiatement.\n- [ ] Un `/24` fonctionne comme avant.\n\n_Référence : `docs/audit/AUDIT.md`_\n",
+  "prio": "P0",
+  "verif": "✅ Exécuté",
+  "short": "`--dhcp` peut saturer la RAM du LXC"
+ },
+ {
+  "n": 4,
+  "file": "04-prime-charge-97-mo-en-memoire-a-chaque-appel-et-pe.md",
+  "title": "[P0] `--prime` charge 97 Mo en mémoire à chaque appel et peut se bloquer définitivement",
+  "labels": [
+   "securite",
+   "P0",
+   "dos",
+   "bug"
+  ],
+  "body": "**Priorité :** P0  \n**Vérification :** ✅ Exécuté  \n**Où :** `bot.py:2199-2246`, `txt/primes.txt`\n\n## Problème\n`--prime` lit tout `txt/primes.txt` (97 Mo, 10,4 M de lignes) avec `readlines()`, **uniquement pour récupérer le dernier nombre**. Le fichier envoyé à l'utilisateur est un autre fichier : `txt/prime.txt` (7 Mo).\n\nEn plus, le `return` sur la branche « Primo no » ne décrémente pas `nbprime`. Après 3 passages par cette branche, la commande répond « je suis occupé » jusqu'au redémarrage.\n\n`logger.info(nb, biggest, n_max)` est aussi un mauvais appel du logger : il affiche une erreur de formatage sur stderr.\n\n## Preuve\nMesuré : **+720 Mo de RAM** et 3,2 s de gel par appel. Jusqu'à 3 appels simultanés sont autorisés, soit environ 2,2 Go (extrapolé). Le compteur bloqué vient de la lecture du code.\n\n## Correctif proposé\n- Remplacer la lecture par une constante `BIGGEST_PRIME = 187465331`, et retirer `txt/primes.txt` du dépôt (à faire upstream, voir ticket hygiène).\n- Utiliser `try/finally` autour du compteur, ou un `asyncio.Semaphore(1)`.\n- Corriger le `logger.info`.\n\n## Critères de validation\n- [ ] `--prime 5` n'augmente plus la RAM de façon notable.\n- [ ] Après 10 appels sur la branche « Primo no », la commande répond toujours normalement.\n\n_Référence : `docs/audit/AUDIT.md`_\n",
+  "prio": "P0",
+  "verif": "✅ Exécuté",
+  "short": "`--prime` charge 97 Mo en mémoire à chaque appel et peut se bloquer définitivement"
+ },
+ {
+  "n": 5,
+  "file": "05-calcul-un-exposant-enorme-gele-le-bot-pendant-des.md",
+  "title": "[P0] `--calcul` : un exposant énorme gèle le bot pendant des minutes",
+  "labels": [
+   "securite",
+   "P0",
+   "dos"
+  ],
+  "body": "**Priorité :** P0  \n**Vérification :** ✅ Exécuté  \n**Où :** `bot.py:2042-2117`\n\n## Problème\n`nb1 ** nb2` est calculé sans borne, de façon synchrone, dans la boucle asyncio. Pendant le calcul, le bot ne répond plus nulle part. Le cooldown (3 appels / 5 s par utilisateur) ne protège pas, car un seul appel suffit.\n\n## Preuve\nMesuré sur la vraie commande :\n- `--calcul 9^9999999` : 6,6 s de gel.\n- `--calcul 9^99999999` : **223 s de gel**, +166 Mo.\n\nLe résultat n'est même pas affichable : `str()` lève `ValueError` au-delà de 4300 chiffres.\n\n## Correctif proposé\n- Refuser si `nb2 * log10(nb1) > 4000` (le résultat dépasserait la limite d'affichage Discord).\n- Borner aussi `*` par la taille du résultat.\n- Remplacer `facto()` récursif par `math.factorial` (garder la borne 806 : 806! fait 1995 chiffres, juste sous la limite Discord).\n\n## Critères de validation\n- [ ] `--calcul 9^99999999` répond immédiatement par un refus.\n- [ ] `--calcul 2^10` répond `1024`.\n\n_Référence : `docs/audit/AUDIT.md`_\n",
+  "prio": "P0",
+  "verif": "✅ Exécuté",
+  "short": "`--calcul` : un exposant énorme gèle le bot pendant des minutes"
+ },
+ {
+  "n": 6,
+  "file": "06-isprime-isprime-algorithme-en-o-n-avec-3-print-par.md",
+  "title": "[P0] `--isPrime` / `/isprime` : algorithme en O(√n) avec 3 `print` par tour",
+  "labels": [
+   "securite",
+   "P0",
+   "dos"
+  ],
+  "body": "**Priorité :** P0  \n**Vérification :** ✅ Exécuté  \n**Où :** `fonctions.py:23-39`, `bot.py:2251`, `bot.py:2265`\n\n## Problème\n`is_prime` teste les diviseurs jusqu'à √n et fait 3 `print` à chaque itération, de façon synchrone. La borne acceptée est 1e29. `/isprime` n'a aucun cooldown.\n\n## Preuve\nMesuré : un premier proche de 1e14 → 3,2 s de gel et 5 millions de lignes imprimées. Pour un premier proche de 1e28, c'est 10⁷ fois plus d'itérations, soit de l'ordre d'un an (extrapolé). Les `print` remplissent aussi les logs (journald / fichier) du LXC.\n\n## Correctif proposé\n- Supprimer les `print`.\n- Utiliser `sympy.isprime`, ou un Miller-Rabin déterministe (exact jusqu'à 3,3·10²⁴ avec les 13 premiers nombres premiers comme bases ; abaisser la borne à 1e24 dans ce cas).\n- Ajouter un cooldown à `/isprime`.\n\n## Critères de validation\n- [ ] `--isPrime 99999999999999999989` répond en moins de 10 ms.\n- [ ] Plus aucune sortie `print` dans les logs.\n\n_Référence : `docs/audit/AUDIT.md`_\n",
+  "prio": "P0",
+  "verif": "✅ Exécuté",
+  "short": "`--isPrime` / `/isprime` : algorithme en O(√n) avec 3 `print` par tour"
+ },
+ {
+  "n": 7,
+  "file": "07-flags-du-ctf-en-clair-dans-le-depot-public.md",
+  "title": "[P0] Flags du CTF en clair dans le dépôt public",
+  "labels": [
+   "securite",
+   "P0"
+  ],
+  "body": "**Priorité :** P0  \n**Vérification :** ✅ Exécuté  \n**Où :** `bot.py:2686-2705`\n\n## Problème\n`FLAG` et `FLAG2` (`CYBN{…}`) sont écrits en dur dans le code d'un dépôt public : il suffit de lire GitHub pour valider le challenge.\n\nDe plus, `/flag` appelle `send_message` deux fois dès qu'un joueur y a droit (la branche `else` s'exécute toujours dans ce cas).\n\n## Preuve\nAppel réel de `/flag` : le flag est bien envoyé, puis la 2ᵉ réponse lève `InteractionResponded`. Testé pour un joueur à 3 victoires et pour un joueur avec un match nul.\n\n## Correctif proposé\n- Lire les flags depuis `.env` (`os.getenv(\"CTF_FLAG\")`).\n- **Changer les flags** côté CTF : les actuels sont publics depuis longtemps.\n- Restructurer `/flag` en `if/elif/else` avec une seule réponse (les deux flags dans un seul message si besoin).\n\n## Critères de validation\n- [ ] `grep CYBN bot.py` ne renvoie rien.\n- [ ] `/flag` ne lève plus d'exception.\n\n_Référence : `docs/audit/AUDIT.md`_\n",
+  "prio": "P0",
+  "verif": "✅ Exécuté",
+  "short": "Flags du CTF en clair dans le dépôt public"
+ },
+ {
+  "n": 8,
+  "file": "08-tokens-discord-presents-dans-l-historique-git.md",
+  "title": "[P0] Tokens Discord présents dans l'historique git",
+  "labels": [
+   "securite",
+   "P0"
+  ],
+  "body": "**Priorité :** P0  \n**Vérification :** ✅ Exécuté  \n**Où :** Historique git (commits de 2019 à 2021-07)\n\n## Problème\n13 tokens distincts du bot (préfixe `NjUzNTYz…`, émis le 2019-12-09) sont lisibles dans l'historique public. `txt/admin.txt` et `txt/names.txt` ont aussi été commités en 2020, puis retirés.\n\n## Preuve\nTrouvés par recherche dans `git log --all -p`. **Révocation non vérifiable de mon côté** : il faut le portail développeur Discord.\n\n## Correctif proposé\n- Vérifier dans le portail développeur que le token actuel n'est pas l'un d'eux. En cas de doute, cliquer sur « Reset Token ».\n- Ne pas réécrire l'historique pour ça : un token révoqué est inoffensif, et la réécriture casserait tous les forks.\n\n## Critères de validation\n- [ ] Le propriétaire du bot confirme que le token actuel a été généré après 2021-07.\n\n_Référence : `docs/audit/AUDIT.md`_\n",
+  "prio": "P0",
+  "verif": "✅ Exécuté",
+  "short": "Tokens Discord présents dans l'historique git"
+ },
+ {
+  "n": 9,
+  "file": "09-ecritures-de-fichiers-non-atomiques-un-crash-peut.md",
+  "title": "[P1] Écritures de fichiers non atomiques : un crash peut effacer les données Pokémon",
+  "labels": [
+   "fiabilite",
+   "P1"
+  ],
+  "body": "**Priorité :** P1  \n**Vérification :** 📖 Lecture du code  \n**Où :** `cogs/pokemon_starter.py:165-197`, `bot.py:405`, `bot.py:3270`\n\n## Problème\n`save_pokemon_data` réécrit tout `data/pokemon_starters.json` directement (`open(..., \"w\")`). Si le processus est tué pendant l'écriture (OOM dans le LXC, redémarrage…), le JSON est tronqué. Au démarrage suivant, `load_pokemon_data` attrape `JSONDecodeError` et **renvoie `{}`**. Le premier message reçu sauvegarde alors ce `{}` : toutes les données Pokémon sont perdues sans alerte.\n\nMême schéma pour `dico.txt` (réécrit à chaque mot nouveau), `leaderboard.txt`, `pve.txt` et `server_names.txt`.\n\nC'est le lien direct avec le risque LXC : les tickets mémoire (dhcp, prime, calcul) peuvent provoquer cette perte.\n\n## Preuve\nDéduit de la lecture du code, non reproduit.\n\n## Correctif proposé\n- Écriture atomique : écrire dans `fichier.tmp`, puis `os.replace(tmp, fichier)`.\n- Sur `JSONDecodeError`, ne **pas** repartir de `{}` : renommer le fichier corrompu en `.corrupt-<date>` et refuser de sauvegarder.\n- Ajouter une sauvegarde quotidienne de `data/`.\n\n## Critères de validation\n- [ ] Tuer le processus pendant une sauvegarde ne laisse jamais de JSON tronqué.\n\n_Référence : `docs/audit/AUDIT.md`_\n",
+  "prio": "P1",
+  "verif": "📖 Lecture du code",
+  "short": "Écritures de fichiers non atomiques : un crash peut effacer les données Pokémon"
+ },
+ {
+  "n": 10,
+  "file": "10-appels-http-bloquants-dans-la-boucle-asyncio.md",
+  "title": "[P1] Appels HTTP bloquants dans la boucle asyncio",
+  "labels": [
+   "fiabilite",
+   "P1",
+   "dos"
+  ],
+  "body": "**Priorité :** P1  \n**Vérification :** 📖 Lecture du code  \n**Où :** `bot.py` (kanye, skin, `/chat` l.3541, `/activity`), `cogs/pokemon_starter.py:276`, `:288`, `:851`, `:889`\n\n## Problème\nTous les appels réseau utilisent `requests.get`, qui est synchrone : chaque appel gèle tout le bot le temps de la réponse. `/chat` n'a même pas de `timeout`, donc un serveur lent peut bloquer le bot indéfiniment.\n\n## Preuve\nDéduit de la lecture du code.\n\n## Correctif proposé\n- Passer à `aiohttp` (déjà installé avec discord.py), ou envelopper avec `await asyncio.to_thread(requests.get, ...)`.\n- Mettre un `timeout` partout.\n\n## Critères de validation\n- [ ] Aucun `requests.get` direct dans une coroutine.\n- [ ] `/chat` a un timeout.\n\n_Référence : `docs/audit/AUDIT.md`_\n",
+  "prio": "P1",
+  "verif": "📖 Lecture du code",
+  "short": "Appels HTTP bloquants dans la boucle asyncio"
+ },
+ {
+  "n": 11,
+  "file": "11-permissions-excessives-administrateur-demande-a-l.md",
+  "title": "[P1] Permissions excessives : Administrateur demandé à l'invitation + `Intents.all()`",
+  "labels": [
+   "securite",
+   "P1"
+  ],
+  "body": "**Priorité :** P1  \n**Vérification :** 📖 Lecture du code  \n**Où :** `README.md`, `bot.py:49`, `bot.py:59-61`, commande `/invite` (`bot.py:2561`)\n\n## Problème\nLe lien d'invitation demande `permissions=8` (Administrateur). Toute faille du bot (cf. `--clear`, `@everyone`) s'exécute donc avec les pleins pouvoirs. `Intents.all()` active aussi les intents privilégiés, dont la présence, qui n'est pas utilisée.\n\n`client = discord.Client(intents=intents)` (l.61) est créé mais jamais utilisé.\n\n## Preuve\nDéduit de la lecture du code.\n\n## Correctif proposé\n- Calculer les permissions réellement nécessaires (envoyer des messages, embeds, fichiers, réactions, gérer les messages, threads, pseudo, vocal) et régénérer le lien.\n- Remplacer `Intents.all()` par `Intents.default()` + `message_content` + `members`.\n- Supprimer `client`.\n- Sur les serveurs existants, retirer le rôle admin du bot.\n\n## Critères de validation\n- [ ] Le lien d'invitation ne contient plus `permissions=8`.\n- [ ] Le bot fonctionne sans le rôle Administrateur.\n\n_Référence : `docs/audit/AUDIT.md`_\n",
+  "prio": "P1",
+  "verif": "📖 Lecture du code",
+  "short": "Permissions excessives : Administrateur demandé à l'invitation + `Intents.all()`"
+ },
+ {
+  "n": 12,
+  "file": "12-contenu-des-conversations-et-donnees-des-membres-p.md",
+  "title": "[P1] Contenu des conversations et données des membres publiés sur GitHub",
+  "labels": [
+   "securite",
+   "P1",
+   "vie-privee"
+  ],
+  "body": "**Priorité :** P1  \n**Vérification :** 📖 Lecture du code  \n**Où :** `bot.py:376-406`, `txt/dico.txt`, `txt/leaderboard.txt`, `txt/pve.txt`, `txt/server_names.txt`, `data/`\n\n## Problème\nLe bot lit tous les messages de tous les serveurs et ajoute chaque mot nouveau à `txt/dico.txt`. Ce fichier est ensuite commité sur le dépôt public (commits « prod »). Les logs associent pseudo + serveur + mot. Les leaderboards (ID Discord + pseudo) sont aussi publics.\n\n## Preuve\nConstaté dans l'historique : `dico.txt` passe de 33 912 lignes (commit `29e4dd1`, mai 2026) à 39 779 lignes aujourd'hui, via les commits « prod » de l'auteur « maybe push in prod ».\n\n## Correctif proposé\n- Ne plus versionner les fichiers alimentés en production (voir ticket hygiène).\n- Prévenir les serveurs que leurs messages alimentent un dictionnaire, ou désactiver la collecte.\n- Arrêter de logger le mot avec le pseudo.\n\n## Critères de validation\n- [ ] Plus aucun fichier modifié par le bot en prod n'est suivi par git.\n\n_Référence : `docs/audit/AUDIT.md`_\n",
+  "prio": "P1",
+  "verif": "📖 Lecture du code",
+  "short": "Contenu des conversations et données des membres publiés sur GitHub"
+ },
+ {
+  "n": 13,
+  "file": "13-ajouts-libres-dans-les-fichiers-texte-sans-limite.md",
+  "title": "[P1] Ajouts libres dans les fichiers texte, sans limite ni modération",
+  "labels": [
+   "securite",
+   "P1"
+  ],
+  "body": "**Priorité :** P1  \n**Vérification :** 📖 Lecture du code  \n**Où :** `bot.py:420-443` (`--addInsult`, `--addBranlette`), `bot.py:4019` (`/addquidenous`)\n\n## Problème\nN'importe qui peut ajouter du texte arbitraire (jusqu'à 2000 caractères par message, 6000 pour une option de slash) dans des fichiers que le bot renvoie ensuite à tout le monde. Il n'y a ni limite de taille, ni cooldown, ni possibilité de retirer une entrée sans éditer le fichier à la main. Ces fichiers sont aussi partagés entre **tous les serveurs** : un serveur peut injecter du contenu qui s'affichera sur un autre.\n\nEffets : spam, contenu choquant/haineux propagé, croissance du disque.\n\n## Preuve\nDéduit de la lecture du code.\n\n## Correctif proposé\n- Longueur max (ex. 200 caractères) et cooldown.\n- Commande de suppression réservée aux admins.\n- Optionnel : stockage par serveur.\n\n## Critères de validation\n- [ ] Une entrée de plus de 200 caractères est refusée.\n- [ ] Un admin peut supprimer une entrée.\n\n_Référence : `docs/audit/AUDIT.md`_\n",
+  "prio": "P1",
+  "verif": "📖 Lecture du code",
+  "short": "Ajouts libres dans les fichiers texte, sans limite ni modération"
+ },
+ {
+  "n": 14,
+  "file": "14-unban-et-immature-retirent-aussi-le-salon-suivant.md",
+  "title": "[P2] `/unban` et `/immature` retirent aussi le salon suivant de la liste",
+  "labels": [
+   "bug",
+   "P2"
+  ],
+  "body": "**Priorité :** P2  \n**Vérification :** ✅ Exécuté  \n**Où :** `bot.py:2484-2495` (`/unban`), `bot.py:2547-2558` (`/immature`)\n\n## Problème\nLa boucle fait `bansLines.remove(id)` pendant qu'elle parcourt `bansLines`. L'élément suivant est sauté, donc jamais réécrit dans le fichier.\n\n## Preuve\nAppel réel de `/unban` : `bans.txt` = `111 222 333 444`, unban du salon 222 → le fichier contient `111 444`. Le salon 333 est débanni sans que personne ne l'ait demandé. `/immature` utilise exactement le même code (non exécuté).\n\n## Correctif proposé\nÉcrire la liste filtrée : `f.writelines(l for l in lines if l != chanID)`.\n\n## Critères de validation\n- [ ] Unban de 222 parmi `111 222 333 444` → `111 333 444`.\n\n_Référence : `docs/audit/AUDIT.md`_\n",
+  "prio": "P2",
+  "verif": "✅ Exécuté",
+  "short": "`/unban` et `/immature` retirent aussi le salon suivant de la liste"
+ },
+ {
+  "n": 15,
+  "file": "15-repeat-plante-systematiquement.md",
+  "title": "[P2] `--repeat` plante systématiquement",
+  "labels": [
+   "bug",
+   "P2"
+  ],
+  "body": "**Priorité :** P2  \n**Vérification :** ✅ Exécuté  \n**Où :** `bot.py:1944-1950`\n\n## Problème\n`ctx.channel.history()` renvoie un générateur async. Le parcourir avec un `for` classique lève `TypeError`, avant même l'envoi du message.\n\n## Preuve\nAppel réel avec discord.py 2.7.1 : `TypeError: 'async_generator' object is not iterable`, `send` jamais appelé. (Yanis indique que la commande marche chez lui : à vérifier si la prod tourne bien sur ce code.)\n\n## Correctif proposé\nRemplacer par `await ctx.message.delete()`, puis `await ctx.send(...)`.\n\n## Critères de validation\n- [ ] `--repeat salut` supprime le message d'origine et renvoie « salut ».\n\n_Référence : `docs/audit/AUDIT.md`_\n",
+  "prio": "P2",
+  "verif": "✅ Exécuté",
+  "short": "`--repeat` plante systématiquement"
+ },
+ {
+  "n": 16,
+  "file": "16-erreur-pokemon-du-jour-le-message-d-erreur-n-est-j.md",
+  "title": "[P2] Erreur Pokémon du jour : le message d'erreur n'est jamais envoyé",
+  "labels": [
+   "bug",
+   "P2"
+  ],
+  "body": "**Priorité :** P2  \n**Vérification :** 📖 Lecture du code  \n**Où :** `bot.py:835-845`\n\n## Problème\nDans le `except`, la première instruction est `await channel.send()` sans contenu. L'API Discord refuse les messages vides (erreur 50006). L'exception est donc relancée depuis le `except`, et les deux messages d'erreur suivants ne partent jamais.\n\n## Preuve\nDéduit de la lecture du code et du comportement de l'API (non testé contre Discord).\n\n## Correctif proposé\nSupprimer `await channel.send()` et le doublon du message.\nOptionnel : ne pas afficher `str(e)` aux utilisateurs.\n\n## Critères de validation\n- [ ] Quand le cache Pokémon est vide, l'image d'erreur et le message s'affichent.\n\n_Référence : `docs/audit/AUDIT.md`_\n",
+  "prio": "P2",
+  "verif": "📖 Lecture du code",
+  "short": "Erreur Pokémon du jour : le message d'erreur n'est jamais envoyé"
+ },
+ {
+  "n": 17,
+  "file": "17-la-taille-du-jour-change-a-chaque-redemarrage-du-b.md",
+  "title": "[P2] La taille « du jour » change à chaque redémarrage du bot",
+  "labels": [
+   "bug",
+   "P2"
+  ],
+  "body": "**Priorité :** P2  \n**Vérification :** ✅ Exécuté  \n**Où :** `bot.py:694`\n\n## Problème\n`hash((user.id, \"YYYY-MM-DD\"))` contient une chaîne. Or Python randomise le hash des chaînes à chaque lancement (`PYTHONHASHSEED`). La valeur « du jour » n'est donc stable que jusqu'au prochain redémarrage. Les stats de `/sexestats` restent cohérentes, mais l'affichage ne l'est pas.\n\n## Preuve\nMême utilisateur, même date, 3 lancements de Python : tailles 12, 26 et 4.\n\n## Correctif proposé\nUtiliser une graine stable : `int(hashlib.sha256(f\"{user.id}:{date}\".encode()).hexdigest(), 16)` et `random.Random(seed)` (au lieu de reseeder le `random` global).\n\n## Critères de validation\n- [ ] Deux lancements du bot donnent la même taille pour le même utilisateur le même jour.\n\n_Référence : `docs/audit/AUDIT.md`_\n",
+  "prio": "P2",
+  "verif": "✅ Exécuté",
+  "short": "La taille « du jour » change à chaque redémarrage du bot"
+ },
+ {
+  "n": 18,
+  "file": "18-crashs-en-messages-prives-dm.md",
+  "title": "[P2] Crashs en messages privés (DM)",
+  "labels": [
+   "bug",
+   "P2"
+  ],
+  "body": "**Priorité :** P2  \n**Vérification :** 📖 Lecture du code  \n**Où :** `bot.py:399` et toutes les lignes `message.guild.name` de `on_message`, `--appel`, `--rename`, `--clear`, `/combat` (cog l.1139)\n\n## Problème\nEn DM, `message.guild` vaut `None`. `on_message` utilise `message.guild.name` dans les logs dès qu'un mot nouveau est vu, donc `AttributeError`. Les commandes qui utilisent `guild_permissions` ou `interaction.guild.id` plantent aussi.\n\n## Preuve\nDéduit de la lecture du code.\n\n## Correctif proposé\n- Ignorer les DM en tête de `on_message` (ou utiliser `guild_name = message.guild.name if message.guild else \"DM\"`).\n- Ajouter `@commands.guild_only()` / `@app_commands.guild_only()` sur les commandes de serveur.\n\n## Critères de validation\n- [ ] Envoyer un DM au bot ne produit aucune trace d'exception.\n\n_Référence : `docs/audit/AUDIT.md`_\n",
+  "prio": "P2",
+  "verif": "📖 Lecture du code",
+  "short": "Crashs en messages privés (DM)"
+ },
+ {
+  "n": 19,
+  "file": "19-pokemon-cooldowns-de-combat-et-d-xp-contournables.md",
+  "title": "[P2] Pokémon : cooldowns de combat et d'XP contournables",
+  "labels": [
+   "bug",
+   "P2"
+  ],
+  "body": "**Priorité :** P2  \n**Vérification :** 📖 Lecture du code  \n**Où :** `cogs/pokemon_starter.py:1158-1189` (combat), `:741-756` (XP)\n\n## Problème\n- **Combat** : `last_combat` n'est écrit qu'après l'acceptation (jusqu'à 60 s plus tard), et seul le cooldown du lanceur est vérifié. On peut donc lancer plusieurs défis en parallèle, et défier quelqu'un qui est lui-même en cooldown.\n- **XP** : `entry[\"last_time\"]` n'est mis à jour qu'après `evolve()`, qui fait plusieurs `sleep` (~4 s). Pendant l'animation, chaque message du joueur rapporte de l'XP.\n\n## Preuve\nDéduit de la lecture du code.\n\n## Correctif proposé\n- Combat : vérifier le cooldown des deux joueurs, et poser `last_combat` (ou un verrou « en combat ») dès l'envoi du défi.\n- XP : écrire `entry[\"last_time\"] = now` avant le moindre `await`.\n\n## Critères de validation\n- [ ] Deux `/combat` lancés coup sur coup : le second est refusé.\n\n_Référence : `docs/audit/AUDIT.md`_\n",
+  "prio": "P2",
+  "verif": "📖 Lecture du code",
+  "short": "Pokémon : cooldowns de combat et d'XP contournables"
+ },
+ {
+  "n": 20,
+  "file": "20-memes-master-presentation-fichier-partage-entre-ut.md",
+  "title": "[P2] Mèmes `--master` / `--presentation` : fichier partagé entre utilisateurs",
+  "labels": [
+   "bug",
+   "P2"
+  ],
+  "body": "**Priorité :** P2  \n**Vérification :** 📖 Lecture du code  \n**Où :** `bot.py:2388`, `bot.py:2431`\n\n## Problème\nL'image générée est écrite dans `images/mastermeme.jpg` / `images/presentationmeme.png` (fichiers suivis par git), puis relue pour l'envoi. Si deux personnes lancent la commande en même temps, l'une peut recevoir l'image de l'autre. Ça modifie aussi des fichiers versionnés en prod.\n\n## Preuve\nDéduit de la lecture du code.\n\n## Correctif proposé\nGénérer dans un `io.BytesIO` et envoyer `discord.File(buf, filename=...)`, comme `/sexestats` le fait déjà (l.1935). Retirer les deux fichiers du dépôt.\n\n## Critères de validation\n- [ ] Aucun fichier n'est écrit sur disque par ces commandes.\n\n_Référence : `docs/audit/AUDIT.md`_\n",
+  "prio": "P2",
+  "verif": "📖 Lecture du code",
+  "short": "Mèmes `--master` / `--presentation` : fichier partagé entre utilisateurs"
+ },
+ {
+  "n": 21,
+  "file": "21-leaderboards-format-texte-fragile-et-recherche-par.md",
+  "title": "[P2] Leaderboards : format texte fragile et recherche par sous-chaîne",
+  "labels": [
+   "bug",
+   "P2"
+  ],
+  "body": "**Priorité :** P2  \n**Vérification :** 📖 Lecture du code  \n**Où :** `bot.py:3269-3370`, `/flag`\n\n## Problème\nLignes `id-victoires-défaites-ratio-nom`. `getScoreLeaderBoard` et `getPlaceLeaderbord` cherchent avec `str(id) in ligne`, une recherche par sous-chaîne. Un nom d'utilisateur (chiffres autorisés) égal à l'ID d'un autre joueur peut faire renvoyer la mauvaise ligne, ce qui compte pour `/flag`. Pas d'écriture atomique non plus (cf. ticket écritures).\n\n## Preuve\nDéduit de la lecture du code. Les noms d'utilisateur Discord actuels n'acceptent pas `-`, donc le décalage de colonnes est peu probable (correction de ma première analyse).\n\n## Correctif proposé\nPasser à un JSON `{user_id: {wins, losses, name}}`, avec écriture atomique.\n\n## Critères de validation\n- [ ] Le score est retrouvé uniquement par égalité exacte de l'ID.\n\n_Référence : `docs/audit/AUDIT.md`_\n",
+  "prio": "P2",
+  "verif": "📖 Lecture du code",
+  "short": "Leaderboards : format texte fragile et recherche par sous-chaîne"
+ },
+ {
+  "n": 22,
+  "file": "22-dependances-pillow-vulnerable-python-3-12-requis-n.md",
+  "title": "[P2] Dépendances : Pillow vulnérable, Python ≥ 3.12 requis, numpy non épinglé",
+  "labels": [
+   "dependances",
+   "P2"
+  ],
+  "body": "**Priorité :** P2  \n**Vérification :** ✅ Exécuté  \n**Où :** `requirements.txt`, `README.md`\n\n## Problème\n- `pip-audit` signale **13 vulnérabilités** dans `pillow 12.2.0`, toutes corrigées en 12.3.0. L'exposition est faible : le bot n'ouvre que ses propres images et des images de GitHub/Wikimedia, pas des fichiers fournis par les utilisateurs.\n- `Tyradex` (via `pratik`) utilise une syntaxe f-string réservée à **Python ≥ 3.12** : l'import échoue en 3.11. Le README annonce Python 3.10.2.\n- `numpy` n'a pas de version épinglée.\n\n## Preuve\n`pip-audit -r requirements.txt` exécuté. L'échec d'import a été constaté en Python 3.11.15.\n\n## Correctif proposé\n- `pillow~=12.3.0`, épingler `numpy`.\n- Mettre à jour le README (Python 3.12+).\n\n## Critères de validation\n- [ ] `pip-audit -r requirements.txt` ne remonte rien.\n- [ ] Le README indique la bonne version de Python.\n\n_Référence : `docs/audit/AUDIT.md`_\n",
+  "prio": "P2",
+  "verif": "✅ Exécuté",
+  "short": "Dépendances : Pillow vulnérable, Python ≥ 3.12 requis, numpy non épinglé"
+ },
+ {
+  "n": 23,
+  "file": "23-petits-bugs-et-nettoyages-divers.md",
+  "title": "[P2] Petits bugs et nettoyages divers",
+  "labels": [
+   "bug",
+   "P2"
+  ],
+  "body": "**Priorité :** P2  \n**Vérification :** 📖 Lecture du code  \n**Où :** Voir la liste\n\n## Problème\n- `--randomWord N` : pas de borne ni de cooldown. Mesuré : N=3 000 000 → 1,2 s de gel, message de 25 M caractères refusé par Discord. Mineur.\n- `logger.info(\"…:\", mot)` (`bot.py:442`) et `logger.info(nb, biggest, n_max)` : mauvais usage du logger, ce qui affiche des erreurs de formatage.\n- `facto()` récursif (`fonctions.py:100`) : remplacer par `math.factorial`.\n- « Qui d'entre nous » : un menu de sélection Discord est limité à 25 options. Au-delà de 25 joueurs, la création du vote échoue.\n- `/mature` et `/immature` sont définies avec les noms Python `ban` / `unban`, ce qui écrase les fonctions précédentes. Pas de bug fonctionnel (les commandes sont enregistrées à la décoration), mais c'est trompeur.\n- `random.seed(seed)` puis `random.seed(None)` sur le générateur global (`bot.py:695`) : utiliser `random.Random(seed)`.\n\n## Preuve\n`randomWord` exécuté. Le reste vient de la lecture du code.\n\n## Correctif proposé\nCorriger au cas par cas.\n\n## Critères de validation\n- [ ] Chaque point de la liste est corrigé ou explicitement abandonné.\n\n_Référence : `docs/audit/AUDIT.md`_\n",
+  "prio": "P2",
+  "verif": "📖 Lecture du code",
+  "short": "Petits bugs et nettoyages divers"
+ },
+ {
+  "n": 24,
+  "file": "24-hygiene-du-depot-a-traiter-sur-le-depot-original.md",
+  "title": "[P2] Hygiène du dépôt (à traiter sur le dépôt original)",
+  "labels": [
+   "hygiene",
+   "P2"
+  ],
+  "body": "**Priorité :** P2  \n**Vérification :** ✅ Exécuté  \n**Où :** Dépôt `NozyZy/Le-ptit-bot`\n\n## Problème\n- `txt/primes.txt` fait 97 Mo, proche de la limite GitHub de 100 Mo. 7 versions de 83 à 97 Mo sont dans l'historique (pack de 67 Mo). Inutile, cf. ticket `--prime`.\n- Les fichiers d'état modifiés en prod sont versionnés : `tg.txt`, `onecops_counter.txt`, `leaderboard.txt`, `pve.txt`, `bans.txt`, `mature.txt`, `dico.txt`, `server_names.txt`, mèmes générés.\n- 3174 fichiers d'un `venv/` ont été commités par le passé.\n- `.gitignore` de 961 lignes (template générique).\n- Bits exécutables sur des images, le README, la licence (déjà corrigé sur la branche `claude/cleanup-security-review` du fork).\n\n## Preuve\nConstaté avec `git rev-list --objects`, `git count-objects` et `git ls-files -s`.\n\n## Correctif proposé\n- Déplacer l'état dans `data/` (déjà ignoré), et fournir des fichiers `*.example` pour l'initialisation.\n- `git rm --cached` des fichiers d'état et de `primes.txt`.\n- Ne pas réécrire l'historique (ça casserait les forks), sauf décision explicite du propriétaire.\n- **À faire upstream** : si on le fait seulement dans le fork, chaque synchronisation créera des conflits.\n\n## Critères de validation\n- [ ] Après une semaine de prod, `git status` reste propre sur le serveur.\n\n_Référence : `docs/audit/AUDIT.md`_\n",
+  "prio": "P2",
+  "verif": "✅ Exécuté",
+  "short": "Hygiène du dépôt (à traiter sur le dépôt original)"
+ }
+]
